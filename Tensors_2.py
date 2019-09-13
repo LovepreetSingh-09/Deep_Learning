@@ -1,0 +1,338 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Sep  3 23:48:11 2019
+
+@author: user
+"""
+import numpy as np
+
+class Tensor(object):
+    def __init__(self,data,autograd=False,creators=None,creation_op=None,id=None,grad=None):
+        self.data=np.array(data)
+        self.creators=creators
+        self.creation_op=creation_op
+        self.grad=None
+        self.autograd=autograd
+        self.children={}
+        if id is None:
+            self.id=np.random.randint(0,100000)
+        else:
+            self.id=id
+        if creators is not None:
+            for c in creators:
+                if self.id not in c.children:
+                    c.children[self.id]=1
+                else:
+                    c.children[self.id]+=1
+    
+    def children_accounted_for(self):
+        for i,cnt in self.children.items():
+            if cnt!=0:
+                return False
+        return True
+    
+    def backward(self,grad=None,grad_origin=None):
+        if self.autograd:
+            if grad is None:
+                grad=Tensor(np.ones_like(self.data))
+            if grad_origin is not None:
+                if self.children[grad_origin.id]==0:
+                    raise Exception
+                else:
+                    self.children[grad_origin.id]-=1
+            
+            assert grad.autograd==False
+            
+            if self.grad is None:
+                self.grad=grad
+            else:
+                self.grad+=grad
+            
+            if self.creators is not None and (self.children_accounted_for() or grad_origin is None):
+                if self.creation_op=='add':
+                    self.creators[0].backward(self.grad,self)
+                    self.creators[1].backward(self.grad,self)
+                
+                if self.creation_op=='sub':
+                    self.creators[0].backward(Tensor(self.grad.data),self)
+                    self.creators[1].backward(Tensor(self.grad.__neg__().data),self)
+                
+                if self.creation_op=='mul':
+                    new=self.grad*self.creators[1]
+                    self.creators[0].backward(new,self)
+                    bew=self.grad*self.creators[0]
+                    self.creators[1].backward(bew,self)
+                
+                if self.creation_op=='neg':
+                    self.creators[0].backward(self.grad.__neg__())
+                
+                if self.creation_op=='mm':
+                    act=self.creators[0]
+                    l=self.creators[1]
+                    b=self.grad.mm(l.transpose())
+                    c=self.grad.transpose().mm(act).transpose()
+                    act.backward(b)
+                    l.backward(c)
+                
+                if self.creation_op=='transpose':
+                    self.creators[0].backward(self.grad.transpose())
+                
+                if self.creation_op=='tanh':
+                    ones=Tensor(np.ones_like(self.grad.data))
+                    self.creators[0].backward(self.grad*(ones-(self*self)))
+                
+                if self.creation_op=='sigmoid':
+                    ones=Tensor(np.ones_like(self.grad.data))
+                    self.creators[0].backward(self.grad * (self *(ones-self)))
+               
+                if("sum" in self.creation_op):
+                    dim = int(self.creation_op.split("_")[1])
+                    self.creators[0].backward(self.grad.expand(dim,self.creators[0].data.shape[dim]))
+
+                if("expand" in self.creation_op):
+                    dim = int(self.creation_op.split("_")[1])
+                    self.creators[0].backward(self.grad.sum(dim))
+                    
+                if self.creation_op=='index_select':
+                    d=np.zeros_like(self.creators[0].data)
+                    indices_=self.index_select_indices.data.flatten()
+                    gr=grad.data.reshape(len(indices_),-1)
+                    for i in range(len(indices_)):
+                        d[indices_[i]]+=gr[i]
+                    self.creators[0].backward(Tensor(d))
+                
+                if self.creation_op=='cross_entropy':
+                    dis=self.softmax_output-self.target_dist
+                    self.creators[0].backward(Tensor(dis))
+                    
+    def __add__(self,other):
+        if self.autograd and other.autograd:
+            return Tensor(self.data+other.data,creators=[self,other],creation_op='add',autograd=True)
+        return Tensor(self.data + other.data)
+    
+    def __neg__(self):
+        if self.autograd:
+            return Tensor(self.data*-1,autograd=True,creators=[self],creation_op='neg')
+        return Tensor(self.data*-1)
+    
+    def __sub__(self,other):
+        if self.autograd and other.autograd:
+            return Tensor(self.data-other.data,creators=[self,other],creation_op='sub',autograd=True)
+        return Tensor(self.data-other.data)
+    
+    def __mul__(self,other):
+        if self.autograd and other.autograd:
+            return Tensor(self.data*other.data,creators=[self,other],creation_op='mul',autograd=True)
+        return Tensor(self.data*other.data)
+    
+    def sum(self,dim):
+        if self.autograd:
+            return Tensor(self.data.sum(dim),creators=[self],creation_op='sum_'+str(dim),autograd=True)
+        return Tensor(self.data.sum(dim))
+        
+    def mm(self,x):
+        if self.autograd:
+            return Tensor(self.data.dot(x.data),creators=[self,x],creation_op='mm',autograd=True)
+        return Tensor(self.data.dot(x.data))
+        
+    def transpose(self):
+        if self.autograd:
+            return Tensor(self.data.transpose(),creators=[self],creation_op='transpose',autograd=True)
+        return Tensor(self.data.transpose())
+    
+    def expand(self, dim,copies):
+        trans_cmd = list(range(0,len(self.data.shape)))
+        trans_cmd.insert(dim,len(self.data.shape))
+        new_data = self.data.repeat(copies).reshape(list(self.data.shape) + [copies]).transpose(trans_cmd)
+        if(self.autograd):
+            return Tensor(new_data,autograd=True,creators=[self],creation_op="expand_"+str(dim))
+        return Tensor(new_data)
+    
+    def sigmoid(self):
+        if self.autograd:
+            return Tensor(1/(1+np.exp(-self.data)),autograd=True,creators=[self],creation_op='sigmoid')
+        return Tensor(1/(1+np.exp(-self.data)))
+    
+    def tanh(self):
+        if self.autograd:
+            return Tensor(np.tanh(self.data),autograd=True,creators=[self],creation_op='tanh')
+        return Tensor(np.tanh(self.data))
+    
+    def index_select(self,indices):
+        if self.autograd:
+            new=Tensor(self.data[indices.data],autograd=True,creators=[self],creation_op='index_select')
+            new.index_select_indices=indices
+            return new
+        return Tensor(self.data[indices.data])
+       
+    def cross_entropy(self,target_indices):
+        temp=np.exp(self.data)
+        softmax_output=temp/np.sum(temp,axis=len(self.data.shape)-1,keepdims=True)
+        t=target_indices.data.flatten()
+        p=softmax_output.reshape(len(t),-1)
+        target_dist=np.eye(p.shape[1])[t]
+        loss=-(np.log(p)*(target_dist)).sum(1).mean()
+        if self.autograd:
+            out=Tensor(loss,autograd=True,creators=[self],creation_op='cross_entropy')
+            out.softmax_output=softmax_output
+            out.target_dist=target_dist
+            return out
+        return Tensor(loss)
+        
+    def __repr__(self):
+        return str(self.data.__repr__())
+    
+    def __str__(self):
+        return str(self.data.__str__())
+                
+class SGD(object):
+    def __init__(self,parameters,alpha=0.01):
+        self.parameters=parameters
+        self.alpha=alpha
+        
+    def zero(self):
+        for w in self.parameters:
+            w.grad.data*=0
+        
+    def step(self,zero=True):
+        for w in self.parameters:
+           # print(w.grad)
+            w.data-=w.grad.data*self.alpha
+            if zero:
+                w.grad.data*=0
+                
+class Layer(object):
+    def __init__(self):
+        self.parameters=list()
+    def get_parameters(self):
+        return self.parameters
+    
+class Linear(Layer):
+    def __init__(self,n_inputs,n_outputs):
+        super().__init__()
+        w=np.random.randn(n_inputs,n_outputs)*np.sqrt(2.0/(n_inputs))
+        self.weights=Tensor(w,autograd=True)
+        self.bias=Tensor(np.zeros(n_outputs),autograd=True)
+        self.parameters.append(self.weights)
+        self.parameters.append(self.bias)
+    
+    def forward(self,input):
+        return input.mm(self.weights)+self.bias.expand(0,len(input.data))
+
+class Sequential(Layer):
+    def __init__(self,layers=list()):
+        super().__init__()
+        self.layers=layers
+        
+    def add(self,layer):
+        self.layers.append(layer)
+    
+    def forward(self,input):
+        for l in self.layers:
+            input=l.forward(input)
+        return input
+    
+    def get_parameters(self):
+        params=list()
+        for l in self.layers:
+            params+=l.get_parameters()
+        return params
+
+class Tanh(Layer):
+    def __init__(self):
+        super().__init__()
+    
+    def forward(self,input):
+        return input.tanh()
+
+class Sigmoid(Layer):
+    def __init__(self):
+        super().__init__()
+    
+    def forward(self,input):
+        return input.sigmoid()
+
+class MSELoss(Layer):
+    def __init__(self):
+        super().__init__()
+    def forward(self,pred,target):
+        return ((pred-target)*(pred-target)).sum(0)
+
+class Embedding(Layer):
+    def __init__(self,vocab_size,dim):
+        super().__init__()
+        self.vocab=vocab_size
+        self.dim=dim
+        self.weight=Tensor((np.random.rand(vocab_size,dim)-0.5)/dim,autograd=True)
+        self.parameters.append(self.weight)
+        
+    def forward(self,input):
+        return self.weight.index_select(input)
+
+class CrossEntropyLoss(Layer):
+    def __init__(self):
+        super().__init__()
+    def forward(self,input,target):
+        return input.cross_entropy(target)
+
+
+np.random.seed(0)
+
+data = Tensor(np.array([1,2,1,2]), autograd=True)
+target = Tensor(np.array([[0],[1],[0],[1]]), autograd=True)
+
+embed = Embedding(5,3)
+model = Sequential([embed, Tanh(), Linear(3,1), Sigmoid()])
+criterion = MSELoss()
+
+optim = SGD(parameters=model.get_parameters(), alpha=0.5)
+alpha=0.5
+for i in range(10):
+    # Predict
+    pred = model.forward(data)
+    #pred1 =embed.forward(data)
+    #pred2=Tanh().forward(pred1)
+    #pred3=Linear(3,1).forward(pred2)
+    #pred=Sigmoid().forward(pred3)
+    #print(pred.grad)
+    #print(pred1.creation_op)
+    # Compare
+    # print(loss.autograd)
+    loss = criterion.forward(pred,target)
+    #print(loss)
+    # Learn
+    loss.backward(Tensor(np.ones_like(loss.data)))
+    #print(pred.grad)
+    #print(pred.creation_op)
+    optim.step()
+    print(loss)
+    #for w in model.get_parameters():
+     #   print(w.grad)
+      #  w.data-=w.grad.data*alpha
+       # w.grad.data*=0
+print(pred.grad)
+print(pred.autograd)    
+print(model.get_parameters()[2].autograd)
+
+
+# data indices
+data = Tensor(np.array([1,2,1,2]), autograd=True)
+# target indices
+target = Tensor(np.array([0,1,0,1]), autograd=True)
+model = Sequential([Embedding(3,3), Tanh(), Linear(3,4)])
+criterion = CrossEntropyLoss()
+
+optim = SGD(parameters=model.get_parameters(), alpha=0.9)
+
+for i in range(10):
+    # Predict
+    pred = model.forward(data)
+    # Compare
+    loss = criterion.forward(pred,target)
+    # Learn
+    loss.backward(Tensor(np.ones_like(loss.data)))
+    optim.step()
+    print(loss)
+print(pred.grad)
+ 
+ 
