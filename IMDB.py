@@ -14,6 +14,7 @@ raw_labels=g.readlines()
 print(raw_labels[2])
 g.close()
 
+print(len(raw_reviews))
 tokens=list(map(lambda x: set(x.split(' ')),raw_reviews))
 # Makes a single dictionary 
 print(len(tokens)) # 25000
@@ -85,7 +86,7 @@ for j in range(iterations):
         total+=1
         if(i%10==0):
             progress=str(i/float(len(input_dataset)))
-            sys.stdout.write('\rIter:'+str(j)+' Review:'+str(i)+'Progress:'+progress[0:5]+' Train Acc.:'+str((correct/total)*100)+'%')
+            sys.stdout.write('\rIter:'+str(j)+' Review:'+str(i)+' Progress:'+progress[0:5]+' Train Acc.:'+str((correct/total)*100)+'%')
 correct,total=0,0
 for i in range(len(input_dataset)-1000,len(input_dataset)):
     x,y=input_dataset[i],target_dataset[i]
