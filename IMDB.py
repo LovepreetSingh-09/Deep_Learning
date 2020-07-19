@@ -18,7 +18,7 @@ print(len(raw_reviews))
 tokens=list(map(lambda x: set(x.split(' ')),raw_reviews))
 # Makes a single dictionary 
 print(len(tokens)) # 25000
-print(tokens[4]) # 25000
+print(tokens[4])
 
 vocab=set()
 for sent in tokens:
@@ -70,7 +70,7 @@ def sigmoid(x):
 
 w0=0.2*np.random.random((len(vocabs),hidden_size))-0.1
 w1=0.2*np.random.random((hidden_size,1))-0.1
-print(np.sum(w0[1]))
+print(np.sum(w0[1:5]))
 correct,total=0,0
 for j in range(iterations):
     for i in range(len(input_dataset)-1000):
@@ -123,7 +123,7 @@ for sent in tokens:
         b+=1
         wordcnt[word]-=1
 print(wordcnt['beautiful'])
-print(wordcnt.most_common(10)[0][0])
+print(wordcnt.most_common(10))
 vocab=list(map(lambda x: x[0],wordcnt.most_common()))
 word2index={}
 print(vocab[0])
